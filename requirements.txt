@@ -4,3 +4,7 @@ streamlit
 streamlit-webrtc
 av
 openai-clip
+pyyaml
+requests
+numpy
+pandas

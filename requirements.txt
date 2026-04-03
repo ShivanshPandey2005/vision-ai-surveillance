@@ -1,0 +1,10 @@
+ultralytics
+opencv-python
+pandas
+streamlit
+pyyaml
+requests
+numpy
+torch
+torchvision
+torchaudio

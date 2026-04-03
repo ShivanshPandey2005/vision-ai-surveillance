@@ -1,0 +1,27 @@
+# YOLOv8 Model Configuration
+model:
+  path: "yolov8m-worldv2.pt"  # Options: yolov8m-worldv2, yolov8s-world, yolov8n, yolov8s
+  confidence: 0.5     # Object detection confidence threshold
+  classes: null # Handled dynamically via app Custom Classes
+
+# Alert System Configuration
+alerts:
+  telegram:
+    enabled: false
+    token: "YOUR_TELEGRAM_BOT_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
+  cooldown: 30       # Minimum seconds between consecutive alerts for the same event type
+
+# Detection Features
+features:
+  roi:
+    enabled: true
+    points: [[100, 100], [500, 100], [500, 400], [100, 400]] # Default ROI (will be overridable in dashboard)
+  loitering:
+    enabled: true
+    threshold_seconds: 10 # Alert if a person stays in frame for more than 10 seconds
+
+# Storage Settings
+storage:
+  logs_path: "outputs/events.json"
+  snapshots_dir: "outputs/snapshots/"

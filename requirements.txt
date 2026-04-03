@@ -6,8 +6,6 @@ pyyaml
 requests
 numpy
 torch
-torchvision
-torchaudio
 streamlit-webrtc
 av
-git+https://github.com/ultralytics/CLIP.git
+clip @ git+https://github.com/openai/CLIP.git

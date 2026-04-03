@@ -2,7 +2,7 @@ import cv2
 from ultralytics import YOLO
 
 class YOLODetector:
-    def __init__(self, model_path="yolov8n.pt", confidence=0.5):
+    def __init__(self, model_path="yolov8n.pt", confidence=0.2):
         """
         Initialize the YOLOv8 detector.
         :param model_path: Path to the .pt model weights.

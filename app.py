@@ -79,7 +79,7 @@ st.markdown("<p style='text-align: center; color: #94a3b8; font-size: 1.2rem; ma
 st.sidebar.header("🔧 Settings")
 model_path = st.sidebar.selectbox("YOLOv8 Model", ["yolov8m-worldv2.pt", "yolov8s-world.pt", "yolov8n.pt", "yolov8s.pt", "yolov8m.pt"], index=0)
 conf_threshold = st.sidebar.slider("Confidence Threshold", 0.1, 1.0, config['model']['confidence'])
-st.sidebar.info("Detected classes: 1200+ Common Everyday Objects" if "world" in model_path else "Detected classes: All (80 COCO objects)")
+st.sidebar.info("Detected classes: 50+ Optimized Security & Household Objects" if "world" in model_path else "Detected classes: All (80 COCO objects)")
 
 # Feature Toggles
 st.sidebar.header("🔍 Features")
@@ -109,7 +109,9 @@ class VideoTransformer(VideoTransformerBase):
         frame_display = img.copy()
         
         # Detection & Tracking
-        results = self.detector.track(img, classes=self.config['model']['classes'])
+        # Use None classes for YOLO-World if already pre-set
+        target_classes = None if "world" in self.config['model']['path'] else self.config['model']['classes']
+        results = self.detector.track(img, classes=target_classes)
         current_time = datetime.now()
         
         if results.boxes.id is not None:

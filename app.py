@@ -5,6 +5,9 @@ import numpy as np
 import time
 from datetime import datetime
 import subprocess
+import threading
+import queue
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 from detection.yolo_detector import YOLODetector
 from utils.roi import is_point_in_polygon, draw_roi
 from utils.logger import EventLogger
@@ -12,10 +15,18 @@ from alerts.telegram_alert import TelegramAlerter
 
 # Load Config
 def load_config():
+    # Priority: st.secrets (Cloud) > local config.yaml
+    try:
+        if "alerts" in st.secrets:
+            return st.secrets
+    except:
+        pass
+    
     with open("config/config.yaml", "r") as f:
         return yaml.safe_load(f)
 
 config = load_config()
+RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
 # UI Layout
 st.set_page_config(page_title="AI Smart Surveillance", layout="wide")
@@ -80,12 +91,62 @@ loitering_limit = st.sidebar.number_input("Loitering (sec)", 1, 60, config['feat
 st.sidebar.header("🔔 Alerts")
 enable_alerts = st.sidebar.toggle("Enable Telegram Alerts", config['alerts']['telegram']['enabled'])
 
-# Initialize Components
+# AI Video Processor for WebRTC
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self, detector, logger, alerter, config, roi_points):
+        self.detector = detector
+        self.logger = logger
+        self.alerter = alerter
+        self.config = config
+        self.roi_points = roi_points
+        self.tracker_history = {}
+        self.last_spoken = {}
+        self.last_spoken_cls = {}
+        self.result_queue = queue.Queue()
+
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        frame_display = img.copy()
+        
+        # Detection & Tracking
+        results = self.detector.track(img, classes=self.config['model']['classes'])
+        current_time = datetime.now()
+        
+        if results.boxes.id is not None:
+            boxes = results.boxes.xyxy.cpu().numpy()
+            ids = results.boxes.id.int().cpu().numpy()
+            confs = results.boxes.conf.cpu().numpy()
+            classes = results.boxes.cls.int().cpu().numpy()
+            
+            for box, track_id, conf, cls in zip(boxes, ids, confs, classes):
+                x1, y1, x2, y2 = map(int, box)
+                center = (int((x1+x2)/2), int((y1+y2)/2))
+                cls_name = self.detector.model.names[cls]
+                
+                # Draw bounding box
+                cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(frame_display, f"ID:{track_id} {cls_name}", (x1, y1-5), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                
+                # Voice Alert logic (passed to UI via queue)
+                current_time_sec = time.time()
+                if not self.last_spoken.get(track_id, False):
+                    if current_time_sec - self.last_spoken_cls.get(cls_name, 0) > 15:
+                        self.last_spoken[track_id] = True
+                        self.last_spoken_cls[cls_name] = current_time_sec
+                        self.result_queue.put({"type": "speech", "text": cls_name})
+                
+                # Intrusion/Loitering logic
+                if is_point_in_polygon(center, self.roi_points):
+                    event = self.logger.log_event(img, "Intrusion", track_id, conf)
+                    self.alerter.send_alert("Intrusion", track_id, conf, event['snapshot'])
+        
+        return frame_display
+
 @st.cache_resource
 def init_detector(path, conf):
     det = YOLODetector(model_path=path, confidence=conf)
     if "world" in path:
-        # Instead of 1200 words (which freezes CPU for 5 minutes), load the top most essential terms.
         custom_classes = [
             "person", "cigarette", "cell phone", "fan", "almirah", "chair", "table", "desk", 
             "laptop", "bottle", "cup", "backpack", "handbag", "book", "clock", "television", 
@@ -94,9 +155,7 @@ def init_detector(path, conf):
             "toothbrush", "hair dryer", "knife", "spoon", "fork", "bowl", "potted plant", 
             "umbrella", "shoes", "glasses", "watch", "pen", "tablet", "wallet", "keys"
         ]
-        # Remove duplicates
-        selected_classes = list(set([c for c in custom_classes if c]))
-        det.model.set_classes(selected_classes)
+        det.model.set_classes(list(set(custom_classes)))
     return det
 
 with st.spinner("Loading AI Engine & Vocabulary (Takes ~30 sec first time)..."):
@@ -122,103 +181,41 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("🎥 Live Feed")
-    placeholder = st.empty()
     
-    col_start, col_stop = st.columns(2)
-    start_button = col_start.button("Start Surveillance")
-    stop_button = col_stop.button("Stop Surveillance")
+    # Browser-based TTS (JavaScript)
+    speech_placeholder = st.empty()
     
-    if start_button:
-        st.session_state["run_surveillance"] = True
-    if stop_button:
-        st.session_state["run_surveillance"] = False
+    webrtc_ctx = webrtc_streamer(
+        key="surveillance",
+        video_transformer_factory=lambda: VideoTransformer(
+            detector, logger, alerter, config, config['features']['roi']['points']
+        ),
+        rtc_configuration=RTC_CONFIG,
+        media_stream_constraints={"video": True, "audio": False},
+    )
+
+    if webrtc_ctx.video_transformer:
+        # Handle results from the transformer thread
+        try:
+            while True:
+                result = webrtc_ctx.video_transformer.result_queue.get_nowait()
+                if result["type"] == "speech":
+                    # Inject JS to speak in browser
+                    cls_name = result["text"]
+                    speech_placeholder.markdown(f"""
+                        <script>
+                            var msg = new SpeechSynthesisUtterance('Object detected, it is a {cls_name}');
+                            window.speechSynthesis.speak(msg);
+                        </script>
+                    """, unsafe_allow_html=True)
+        except queue.Empty:
+            pass
 
 with col2:
     st.subheader("📜 Recent Events")
     event_log_placeholder = st.empty()
-
-# Main Loop
-run = st.session_state.get("run_surveillance", False)
-
-if run:
-    # Source (0 for webcam)
-    video_source = 0
-    cap = cv2.VideoCapture(video_source)
-
-    # Default ROI from config
-    roi_points = config['features']['roi']['points']
     
-    try:
-        while cap.isOpened() and st.session_state.get("run_surveillance", False):
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Failed to capture Video Stream.")
-                break
-                
-            frame_display = frame.copy()
-            
-            # Draw ROI if enabled
-            if enable_roi:
-                draw_roi(frame_display, roi_points)
-                
-            # Detection & Tracking
-            results = detector.track(frame, classes=config['model']['classes'])
-            
-            current_time = datetime.now()
-            frame_events = []
-            
-            if results.boxes.id is not None:
-                boxes = results.boxes.xyxy.cpu().numpy()
-                ids = results.boxes.id.int().cpu().numpy()
-                confs = results.boxes.conf.cpu().numpy()
-                classes = results.boxes.cls.int().cpu().numpy()
-                
-                for box, track_id, conf, cls in zip(boxes, ids, confs, classes):
-                    x1, y1, x2, y2 = map(int, box)
-                    center = (int((x1+x2)/2), int((y1+y2)/2))
-                    cls_name = detector.model.names[cls]
-                    
-                    # Draw bounding box
-                    label = f"ID:{track_id} {cls_name}"
-                    cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(frame_display, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                    
-                    # Voice Alert with dual-layer anti-spam logic
-                    current_time_sec = time.time()
-                    if not st.session_state.last_spoken.get(track_id, False):
-                        if current_time_sec - st.session_state.last_spoken_cls.get(cls_name, 0) > 15:
-                            st.session_state.last_spoken[track_id] = True
-                            st.session_state.last_spoken_cls[cls_name] = current_time_sec
-                            # Run powershell TTS in background so it doesn't block video feed
-                            tts_cmd = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('Object detected, it is a {cls_name}')"
-                            subprocess.Popen(["powershell", "-Command", tts_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
-                    
-                    # Intrusion Logic
-                    if enable_roi and is_point_in_polygon(center, roi_points):
-                        event = logger.log_event(frame, "Intrusion", track_id, conf)
-                        alerter.send_alert("Intrusion", track_id, conf, event['snapshot'])
-                        frame_events.append(event)
-                        
-                    # Loitering Logic
-                    if enable_loitering:
-                        if track_id not in st.session_state.tracker_history:
-                            st.session_state.tracker_history[track_id] = current_time
-                        else:
-                            duration = (current_time - st.session_state.tracker_history[track_id]).total_seconds()
-                            if duration > loitering_limit:
-                                event = logger.log_event(frame, "Loitering", track_id, conf)
-                                alerter.send_alert("Loitering", track_id, conf, event['snapshot'])
-                                frame_events.append(event)
-            
-            # Update UI
-            placeholder.image(cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB), use_container_width=True)
-            
-            # Update Event List
-            recent_logs = logger.get_recent_logs(8)
-            if recent_logs:
-                event_log_placeholder.table(recent_logs[::-1])
-
-    finally:
-        cap.release()
-else:
-    st.write("Surveillance Stopped.")
+    # Show recent logs
+    recent_logs = logger.get_recent_logs(8)
+    if recent_logs:
+        event_log_placeholder.table(recent_logs[::-1])

@@ -10,3 +10,4 @@ torchvision
 torchaudio
 streamlit-webrtc
 av
+git+https://github.com/ultralytics/CLIP.git

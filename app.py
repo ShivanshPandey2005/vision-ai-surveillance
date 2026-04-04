@@ -103,32 +103,43 @@ class VideoTransformer(VideoTransformerBase):
         self.last_spoken = {}
         self.last_spoken_cls = {}
         self.result_queue = queue.Queue()
+        self.frame_count = 0
+        self.last_results = None
 
     def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        frame_display = img.copy()
+        img_raw = frame.to_ndarray(format="bgr24")
+        frame_display = img_raw.copy()
+        self.frame_count += 1
         
         # AI Activity Indicator
-        cv2.putText(frame_display, "AI ENGINE: ACTIVE", (10, 30), 
+        cv2.putText(frame_display, "AI ENGINE: ACTIVE (OPTIMIZED)", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
-        # Detection & Tracking
-        # Use None classes for YOLO-World if already pre-set
-        target_classes = None if "world" in self.config['model']['path'] else self.config['model']['classes']
-        results = self.detector.track(img, classes=target_classes)
-        current_time = datetime.now()
-        
-        # Pull Results
-        if results.boxes is not None:
-            boxes = results.boxes.xyxy.cpu().numpy()
-            confs = results.boxes.conf.cpu().numpy()
-            classes = results.boxes.cls.int().cpu().numpy()
+        # Process every 5th frame to save CPU
+        if self.frame_count % 5 == 0 or self.last_results is None:
+            # Downscale for AI speed (Inference only)
+            img_ai = cv2.resize(img_raw, (320, 320))
+            
+            # Detection & Tracking
+            target_classes = None if "world" in self.config['model']['path'] else self.config['model']['classes']
+            self.last_results = self.detector.track(img_ai, classes=target_classes)
+            
+        # Draw and handle using last_results
+        if self.last_results is not None and self.last_results.boxes is not None:
+            boxes = self.last_results.boxes.xyxy.cpu().numpy()
+            confs = self.last_results.boxes.conf.cpu().numpy()
+            classes = self.last_results.boxes.cls.int().cpu().numpy()
+            
+            # Rescale boxes back to original size
+            h, w = img_raw.shape[:2]
+            scale_x, scale_y = w / 320, h / 320
             
             # Check if IDs exist (tracking), otherwise use -1 (detection only)
-            ids = results.boxes.id.int().cpu().numpy() if results.boxes.id is not None else [-1] * len(boxes)
+            ids = self.last_results.boxes.id.int().cpu().numpy() if self.last_results.boxes.id is not None else [-1] * len(boxes)
             
             for box, track_id, conf, cls in zip(boxes, ids, confs, classes):
-                x1, y1, x2, y2 = map(int, box)
+                # Scale coordinates
+                x1, y1, x2, y2 = int(box[0]*scale_x), int(box[1]*scale_y), int(box[2]*scale_x), int(box[3]*scale_y)
                 center = (int((x1+x2)/2), int((y1+y2)/2))
                 cls_name = self.detector.model.names[cls]
                 
@@ -150,7 +161,7 @@ class VideoTransformer(VideoTransformerBase):
                     
                 # Intrusion/Loitering logic
                 if is_point_in_polygon(center, self.roi_points):
-                    event = self.logger.log_event(img, "Intrusion", track_id, conf)
+                    event = self.logger.log_event(img_raw, "Intrusion", track_id, conf)
                     self.alerter.send_alert("Intrusion", track_id, conf, event['snapshot'])
         
         return frame_display

@@ -1,7 +1,7 @@
 # YOLOv8 Model Configuration
 model:
-  path: "yolov8m-worldv2.pt"  # Options: yolov8m-worldv2, yolov8s-world, yolov8n, yolov8s
-  confidence: 0.5     # Object detection confidence threshold
+  path: "yolov8s-world.pt"  # Options: yolov8m-worldv2, yolov8s-world, yolov8n, yolov8s
+  confidence: 0.2     # Object detection confidence threshold
   classes: null # Handled dynamically via app Custom Classes
 
 # Alert System Configuration

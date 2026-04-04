@@ -23,7 +23,7 @@ class YOLODetector:
             conf=self.confidence,
             classes=classes,
             verbose=False,
-            device="0" if self.model.device == "cuda" else "cpu"
+            device="cpu"
         )
         return results[0] # Return result for the single frame
 
@@ -40,6 +40,7 @@ class YOLODetector:
             classes=classes,
             persist=True,
             tracker=tracker,
-            verbose=False
+            verbose=False,
+            device="cpu"
         )
         return results[0]

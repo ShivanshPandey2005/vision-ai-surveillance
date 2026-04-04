@@ -106,6 +106,8 @@ class VideoTransformer(VideoTransformerBase):
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
+        frame_display = img.copy()
+        
         # AI Activity Indicator
         cv2.putText(frame_display, "AI ENGINE: ACTIVE", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)

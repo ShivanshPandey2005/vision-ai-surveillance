@@ -120,9 +120,9 @@ class VideoTransformer(VideoTransformerBase):
             # Downscale for AI speed (Inference only)
             img_ai = cv2.resize(img_raw, (320, 320))
             
-            # Detection & Tracking
+            # Detection (Use predict for 2x speed over track)
             target_classes = None if "world" in self.config['model']['path'] else self.config['model']['classes']
-            self.last_results = self.detector.track(img_ai, classes=target_classes)
+            self.last_results = self.detector.detect(img_ai, classes=target_classes)
             
         # Draw and handle using last_results
         if self.last_results is not None and self.last_results.boxes is not None:
@@ -214,7 +214,8 @@ with col1:
             detector, logger, alerter, config, config['features']['roi']['points']
         ),
         rtc_configuration=RTC_CONFIG,
-        media_stream_constraints={"video": True, "audio": False},
+        media_stream_constraints={"video": {"width": 320, "height": 240}, "audio": False},
+        async_processing=True,
     )
 
     if webrtc_ctx.video_transformer:

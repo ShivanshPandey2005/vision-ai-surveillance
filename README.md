@@ -5,6 +5,10 @@ A production-ready, **Open-Vocabulary** AI-powered surveillance engine built wit
 ![Streamlit Architecture](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)
 ![YOLO-World](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Streamlit_Cloud-blue?style=for-the-badge&logo=streamlit)](https://vision-ai-surveillance-m9x5lmwibh8cgwjbqcrnib.streamlit.app/)
+
+## 🌐 Live URL
+[vision-ai-surveillance.streamlit.app](https://vision-ai-surveillance-m9x5lmwibh8cgwjbqcrnib.streamlit.app/)
 
 ## 🚀 Key Features
 

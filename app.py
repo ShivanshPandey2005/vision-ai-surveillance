@@ -78,7 +78,7 @@ st.markdown("<p style='text-align: center; color: #94a3b8; font-size: 1.2rem; ma
 # Sidebar - Settings
 st.sidebar.header("🔧 Settings")
 model_path = st.sidebar.selectbox("YOLOv8 Model", ["yolov8m-worldv2.pt", "yolov8s-world.pt", "yolov8n.pt", "yolov8s.pt", "yolov8m.pt"], index=0)
-conf_threshold = st.sidebar.slider("Confidence Threshold", 0.1, 1.0, config['model']['confidence'])
+conf_threshold = st.sidebar.slider("Confidence Threshold", 0.1, 1.0, 0.15)
 st.sidebar.info("Detected classes: 50+ Optimized Security & Household Objects" if "world" in model_path else "Detected classes: All (80 COCO objects)")
 
 # Feature Toggles
@@ -106,38 +106,46 @@ class VideoTransformer(VideoTransformerBase):
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        frame_display = img.copy()
-        
+        # AI Activity Indicator
+        cv2.putText(frame_display, "AI ENGINE: ACTIVE", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
         # Detection & Tracking
         # Use None classes for YOLO-World if already pre-set
         target_classes = None if "world" in self.config['model']['path'] else self.config['model']['classes']
         results = self.detector.track(img, classes=target_classes)
         current_time = datetime.now()
         
-        if results.boxes.id is not None:
+        # Pull Results
+        if results.boxes is not None:
             boxes = results.boxes.xyxy.cpu().numpy()
-            ids = results.boxes.id.int().cpu().numpy()
             confs = results.boxes.conf.cpu().numpy()
             classes = results.boxes.cls.int().cpu().numpy()
+            
+            # Check if IDs exist (tracking), otherwise use -1 (detection only)
+            ids = results.boxes.id.int().cpu().numpy() if results.boxes.id is not None else [-1] * len(boxes)
             
             for box, track_id, conf, cls in zip(boxes, ids, confs, classes):
                 x1, y1, x2, y2 = map(int, box)
                 center = (int((x1+x2)/2), int((y1+y2)/2))
                 cls_name = self.detector.model.names[cls]
                 
-                # Draw bounding box
-                cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(frame_display, f"ID:{track_id} {cls_name}", (x1, y1-5), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                # Draw bounding box (Red for tracked, Yellow for detection-only)
+                color = (0, 0, 255) if track_id != -1 else (0, 255, 255)
+                cv2.rectangle(frame_display, (x1, y1), (x2, y2), color, 2)
+                label = f"ID:{track_id} {cls_name}" if track_id != -1 else f"{cls_name} {conf:.2f}"
+                cv2.putText(frame_display, label, (x1, y1-5), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 
-                # Voice Alert logic (passed to UI via queue)
-                current_time_sec = time.time()
-                if not self.last_spoken.get(track_id, False):
-                    if current_time_sec - self.last_spoken_cls.get(cls_name, 0) > 15:
-                        self.last_spoken[track_id] = True
-                        self.last_spoken_cls[cls_name] = current_time_sec
-                        self.result_queue.put({"type": "speech", "text": cls_name})
-                
+                # Voice Alert logic (passed to UI via queue) - Only for tracked OR high confidence detection
+                if track_id != -1 or conf > 0.4:
+                    current_time_sec = time.time()
+                    if not self.last_spoken.get(track_id if track_id != -1 else cls_name, False):
+                        if current_time_sec - self.last_spoken_cls.get(cls_name, 0) > 15:
+                            self.last_spoken[track_id if track_id != -1 else cls_name] = True
+                            self.last_spoken_cls[cls_name] = current_time_sec
+                            self.result_queue.put({"type": "speech", "text": cls_name})
+                    
                 # Intrusion/Loitering logic
                 if is_point_in_polygon(center, self.roi_points):
                     event = self.logger.log_event(img, "Intrusion", track_id, conf)

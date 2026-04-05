@@ -7,3 +7,4 @@ pyyaml
 requests
 numpy
 pandas
+git+https://github.com/openai/CLIP.git

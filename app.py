@@ -7,7 +7,8 @@ from datetime import datetime
 import subprocess
 import threading
 import queue
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from detection.yolo_detector import YOLODetector
 from utils.roi import is_point_in_polygon, draw_roi
 from utils.logger import EventLogger
@@ -92,7 +93,7 @@ st.sidebar.header("🔔 Alerts")
 enable_alerts = st.sidebar.toggle("Enable Telegram Alerts", config['alerts']['telegram']['enabled'])
 
 # AI Video Processor for WebRTC
-class VideoTransformer(VideoTransformerBase):
+class VideoTransformer(VideoProcessorBase):
     def __init__(self, detector, logger, alerter, config, roi_points):
         self.detector = detector
         self.logger = logger
@@ -106,7 +107,7 @@ class VideoTransformer(VideoTransformerBase):
         self.frame_count = 0
         self.last_results = None
 
-    def transform(self, frame):
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img_raw = frame.to_ndarray(format="bgr24")
         frame_display = img_raw.copy()
         self.frame_count += 1
@@ -164,7 +165,7 @@ class VideoTransformer(VideoTransformerBase):
                     event = self.logger.log_event(img_raw, "Intrusion", track_id, conf)
                     self.alerter.send_alert("Intrusion", track_id, conf, event['snapshot'])
         
-        return frame_display
+        return av.VideoFrame.from_ndarray(frame_display, format="bgr24")
 
 @st.cache_resource
 def init_detector(path, conf):
@@ -210,7 +211,7 @@ with col1:
     
     webrtc_ctx = webrtc_streamer(
         key="surveillance",
-        video_transformer_factory=lambda: VideoTransformer(
+        video_processor_factory=lambda: VideoTransformer(
             detector, logger, alerter, config, config['features']['roi']['points']
         ),
         rtc_configuration=RTC_CONFIG,
@@ -218,11 +219,11 @@ with col1:
         async_processing=True,
     )
 
-    if webrtc_ctx.video_transformer:
-        # Handle results from the transformer thread
+    if webrtc_ctx.video_processor:
+        # Handle results from the processor thread
         try:
             while True:
-                result = webrtc_ctx.video_transformer.result_queue.get_nowait()
+                result = webrtc_ctx.video_processor.result_queue.get_nowait()
                 if result["type"] == "speech":
                     # Inject JS to speak in browser
                     cls_name = result["text"]
